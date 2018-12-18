@@ -1,0 +1,221 @@
+---
+title: "Regression Analysis Project"
+author: "Justin Reising"
+date: "December, 7  2018"
+output: pdf_document
+header-includes:
+    - \usepackage{setspace}\doublespacing
+    - \usepackage{float}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+```{r required packages, include=F, echo= F}
+library(car)
+library(tinytex)
+library(leaps)
+library(corrplot)
+library(knitr)
+library(xtable)
+library(sjPlot)
+library(devtools)
+#install_version("rmarkdown",version=1.8)
+```
+```{r data import and preprocessing, include=F,echo=F}
+# Monday data set (Duke)
+load(url("http://stat.duke.edu/courses/Summer17/sta101.001-2/uploads/project/mondayBaseball.Rdata"))
+
+# Tuesday data set (Duke)
+load(url("http://stat.duke.edu/courses/Summer17/sta101.001-2/uploads/project/tuesdayBaseball.Rdata"))
+
+
+Monday.Numeric<-mondayBaseball[,sapply(mondayBaseball[1:31,], class)=="numeric"]
+Monday.Numeric<-Monday.Numeric[,-c(12,13)]
+Monday.Numeric<-Monday.Numeric[complete.cases(Monday.Numeric),]
+
+MondayCor<-Monday.Numeric
+
+# Remove Inning balls, and strikes
+Monday.Numeric<-Monday.Numeric[,-c(1:3)]
+
+#Remove eephus pitches below 55 mph (anomolies)
+Monday.Numeric<-Monday.Numeric[which(Monday.Numeric$releaseVelocity >55),]
+
+#Remove Spin Direction as it is has an unknown transformation..
+# both curveballs and fastballs have similar rotations (from left and right pitchers)
+Monday.Numeric<-Monday.Numeric[,-4]
+
+attach(Monday.Numeric)
+
+Tuesday.Numeric<-tuesdayBaseball[,sapply(tuesdayBaseball[1:31,], class)=="numeric"]
+Tuesday.Numeric<-Tuesday.Numeric[,-c(12,13)]
+Tuesday.Numeric<-Tuesday.Numeric[complete.cases(Monday.Numeric),]
+
+
+# Remove Inning balls, and strikes and spin direction
+Tuesday.Numeric<-Tuesday.Numeric[,-c(1:3)]
+Tuesday.Numeric<-Tuesday.Numeric[,-4]
+
+test.dat<-Tuesday.Numeric[complete.cases(Tuesday.Numeric),]
+```
+
+# 1 Introduction  
+
+\ \ At the time beginning the composition of this document, the Boston Red Sox and Los Angeles Dogders are in Game 2 of 2018 World Series with a full count, 2 runners on base, and 2 outs in the bottom of the fifth inning at 10:07pm EST on October 24, 2018 in Boston with a temperature of 42 degrees Fahrenheit as Boston tries to take back the lead with the score 2-1. What is remarkable about the game in the age of "Big Data Analytics" is that the details in the opening statement are now variables to consider as a manager of a team for decision making in game situations. Major League Baseball uses state of the art tracking systems installed in every stadium called Statcast and PITCHf/x. Statcast and PITCHf/x are powered by cloud computing services provided by Amazon Web Services (AWS). The tracking technology records the incredibly precise data such as spin rate, velocity, spin direction, horizontal and vertical break, and location relative to the strike zone of a single pitch to name a few. Consequently, every game thousands of different data points recorded at every instance of game play. There are massive amounts data being analyzed simultaneously and analytics created to inform decisions from on the field, to the corporate office. This project will focus on a subset of the type of data gathered to build a multiple regression model to predict an outcome.  
+  
+\ \ The data set provided is a subset collected from the PITCHf/x system and is comprised of all pitches thrown on Mondays during the 2016 MLB regular season, excluding intentional walks (79,931 observations and 35 variables). There are numerous categorical variables which are recorded for every pitch, such as batter name, pitcher name, umpire name, bats (L/R), hits (L/R), etc. For the purposes of this project, features will be selected to omit the consideration of "identifier" variables such as player names and focus primarily on pitch metrics. Although, we are equipped to look at specific match-ups between particular pitchers and hitters.
+
+\newpage
+
+#2 Potential Predictor Variables and Response Variable
+
+**Inning**: (*Integer*) The inning number.
+
+**Balls**: (*Integer*) The number of balls (pitches outside the strike zone) that the pitcher has thrown in the at-bat, calculated before the pitch is thrown.
+
+**Strikes**: (*Integer*) The number of strikes that the batter has obtained in the at-bat, calculated before the pitch is thrown.
+
+**ProbCalledStrike**: (*Float*) Estimated probability that the umpire will call the pitch a strike, if the batter does not swing, based on TruMedia's model.
+
+**ReleaseVelocity**: (*Float*) Pitch velocity (mph).
+
+**SpinRate**: (*Float*) Pitch spin rate (rpm).
+
+**SpinDir**: (*Float*) From the catcher's perspective, the angle (from 0 to 360) between the pole around which the ball is rotating and the positive x-axis.
+
+**HorizLocation**: (*Float*) Distance in feet from the horizontal center of the plate as the ball crosses the front plane of the plate, negative values are inside to right handed batters.
+
+**VertLocation**: (*Float*) Height in feet above the ground as the ball crosses the front plane of the plate.
+
+**HorizMovement**: (*Float*) The horizontal movement, in inches, of the pitch between the release point and home plate, as compared to a theoretical pitch thrown at the same speed with no spin-induced movement.
+
+**VertMovement**: (*Float*) The vertical movement, in inches, of the pitch between the release point and home plate, as compared to a theoretical pitch thrown at the same speed with no spin-induced movement.
+
+\newpage
+
+#3 Research Question
+
+\ \ One of the most prolific attributes of the pitcher-hitter dialogue is the exploitation of weaknesses between the two. The best hitters are ones that are best at timing pitches and the best pitchers are those that are best at upsetting timing of hitters. Baseball is a unique game that combines the reliance of team members to play with synergy around frequent one-on-one match-ups between hitters and pitchers where strategy is hidden from plain sight from people new to the game. On top of the on-field chess match that occurs between every pitch, the speeds and movement of pitches thrown can be missed by a blink of an eye. Physically speaking, the ability for a hitter to track, decide whether or not to swing, and if so, actually hit a 3" diameter ball traveling 95 MPH from 60 feet away, while swinging a 34" bat weighing approximately 31 ounces with a 2.5" barrel, and strike the ball within 1/4" of the center of mass seems impossible. With all of the physics stacked against the hitters, they can use all of the help they can get. In addition, baseball players are very habitual in their actions. When something is working for them, they tend to not deviate from that behavior. During the course of this project I will investigate the variation in pitch speeds from pitchers to try to build a model to predict the release velocity of a pitch given certain metrics measured of the pitch from the Statcast System in place at major league stadiums. 
+
+#4 Background and Motivation
+
+\ \ The evolution of the game of baseball has experienced substantial changes in the past decade since the beginning stages of the implementation of the Statcast system and other technologies in Major League Baseball. With this data being collected, we are able to try to make predictions to inform pitchers about their pitching tendencies and pitch characteristics from the raw data collected of their pitches. We can also compare pitchers' pitches to other pitchers in the league as well as learn how to advise pitchers to try new grips for pitches to achieve greater spin rates or breaking action on curve balls, sliders, etc. This pitch data being collected is currently being analyzed by some of the best statisticians and physicist working for Major League teams to help them understand this data in a more comprehensible way. For this reason, the frame in which this project will focus on is checking our predictive ability of release velocity. One of the main reasons is that the ability to predict release velocity can help determine the pitchers' ability to change speeds. In baseball, even slight changes in pitch speed can be the difference between a key double-play in a one-run game with bases loaded in the bottom of the 9th or a walk off home run. 
+
+
+#5 Checking Model Assumptions & Model Selection
+
+\ \ In this section, we will check our model assumptions. After further investigation of the linear model, I found that the variable spin direction had a curvilinear relationship with release velocity. This is because of the way spin direction is defined and measured. The data showed pitches with similar spin direction could either be classified as curve balls or fastballs which could add unnecessary noise to our model. After various transformation attempts using the Box Cox Transformation, the curvilinear shape of the plot between release velocity and spin direction could not be corrected with current techniques I have been exposed to. Additionally, this unique occurrence caused the concern for multicolinearity in our predictors. In fact, removing the spin direction predictor from the model had no noticeable effect on the parameter estimates. My final reduced model is as follows:
+
+$$
+\hat{Y} = 0.07709 + 0.0091X_{1} + 0.0028X_{2}-0.1114X_{3}+0.4361X_{4}-0.1343X_{5}+0.7661X_{6}
+$$
+
+\ \ Note that in the R output in Table 3, we can see that the each of the predictor variables have significance and that approximately 55.47% of the variation in release velocity can be explained by the linear relationship between release velocity and probability of called strike, spin rate, horizontal location, vertical location, horizontal movement, and vertical movement of the pitch. The estimated mean change in mph of release velocity is approximately .91 for each 0.1 probability of called strike. The estimated mean change in mph of release velocity is 0.0028 per rpm unit. The estimated mean change in mph of release velocity is approximately -0.1114 per foot of horizontal location. The estimated mean change in mph of release velocity is approximately 0.4361 per foot of vertical location. The estimated mean change in mph of release velocity is approximately -0.1343 per inch of horizontal movement. The estimated mean change in mph of release velocity is approximately 0.766 per inch of vertical movement. Note that these mean estimates are assuming all other variables held constant.
+
+\ \ In the model selection process, our focus was primarily on pitch metrics as oppose to situational variables such as inning, balls, strikes, or outs. The scope of our model considered all pitches thrown on Mondays in the 2016 MLB season. After removing incomplete cases and anomalies from the data before selecting the model, I needed to check our assumptions. First, I checked Relationships between the predictor variables and the response variable. Given the correlation plot in Figure 1, I confirmed the results of having slight linear relations between Release Velocity with Probability Called Strike, Spin Rate, Horizontal and Vertical Location, and Horizontal Movement. Also, there was a slight positive relationship between Release Velocity and Vertical Movement. This is expected because pitches that drop vertically tend to have top spin and are thrown at lower velocities described by the Magnus Effect.
+
+\ \ Next, I needed to check for Multicolinearity in my predictor variables formally. The correlation plot in Figure 1 gave me an indication there was no concern for multicolinearity and checking the Variance Inflation Factors for each of the predictors as seen in Table 4 confirm this hypothesis with VIF values for each predictor approximately 1. With the number of observations being 73,723, the assumption of the errors terms having a standard normal distribution is satisfied by the Central Limit Theorem. In fact, the histogram of the residuals in Figure 2 verify this assumption. However, there are observation with significant deviations from the mean of zero on the low end. These types of pitches are referred to as "eephus" pitches, which are extremely slow pitches as to significantly upset the timing of a hitter. While they are very uncommon, it is important to note their existence in the game.
+
+\ \ This leads to the final assumption to check, which is constant variance of the error terms. Figure 3 shows the plot of the residuals v.s the fitted values and can see these small number of residual outliers from such "eephus" pitches described above. Note that deviations tend to occur below the predicted value as physical limitations of release velocity should be considered. A formal test for non-constant variance by the Breusch-Pagan Test indicated that there was non-constant variance with a p-value of practically zero. In an attempt to correct this, I initialed a weighted least squares procedure, but to no avail. Table 4 shows the summary of the weighted least squares regression model which shows very little change in the parameter estimates. Next, I considered removing influential outliers to improve the model. In doing so, I found 4,319 outliers using the DFFITS criteria, in which the DFFITS value of 2($\sqrt{\frac{p}{n}}$) $\approx$ 0.02. Table 5 shows the summary output of the regression model fit after the removal of influential outliers for this criteria and again, there is practically no change in the estimators. Because of the ratio outliers to the total number of observations in this data set, these influential outliers are not "pulling down" the regression line in any significant manner. 
+
+#6 Model Validation and Prediction Accuracy
+
+\ \ In this project, I am fitting the training model to the Monday pitch sample and testing the model on a Tuesday pitch sample of size 925 after removing incomplete cases. To measure the predictive ability of the model, I computed the Mean Square Prediction Error to compare with the Mean Square Error of the training model. Comparing the ratio of MSPR:MSE yielded approximately 0.9138, which is a good indicator of predictive ability without evidence of the model over fitting the training data. Figure 4 shows the plot of the predicted values and actual values for Release Velocity of the Tuesday data set. This plot shows that the predictive ability of velocities between the low to mid 90's are fairly reliable where as pitches below 90mph are more scattered. I believe this could because of the variation of pitch speeds and spin rates of secondary pitches. Curve balls, sliders, and change-ups are pitches designed to upset the timing of the hitter where as fastballs are more consistent and easier to time as hitter. In fact, the accuracy of the model is approximately 96.74%. Further analysis can be done on individual pitchers with this same model if we wish to do so. In conclusion, variation of pitch release velocities play a key role in a pitcher's effectiveness. While this model is an adequate model for predicting release velocity based on the pitch metrics collected by Statcast, we can further investigate the anatomy of effective pitches. All statistical results in the form of tables and figures are found in the Appendix.
+
+
+
+\newpage
+
+## Appendix
+
+```{r sample data, echo = F}
+kable(head(MondayCor[,c(1:6)]), caption = "MLB 2016 Batted Balls on Mondays ",booktabs=T)
+kable(head(MondayCor[,c(7:11)]),booktabs=T)
+```
+
+```{r corplot, echo = F, fig.align='center', fig.cap="\\label{fig:figs}Correlation Plot",fig.pos= 'H'}
+cmat<-cor(MondayCor, use = 'complete.obs')
+corrplot(cmat, type = "upper", method = 'number', number.cex = 0.5)
+```
+
+\pagebreak
+
+```{r model intro, echo=F}
+pitch.reg.full<-lm(releaseVelocity~ . , data = Monday.Numeric)
+#print(xtable(summary(pitch.reg.full)), type = "html")
+kable(summary(pitch.reg.full)$coef, digits = 4, caption = "Full Regression Model")
+```
+
+```{r reg plots, include = F, echo=F, fig.align='center',fig.cap="\\label{fig:figs}Response v.s Predictor Plots"}
+#par(mfrow= c(3,2))
+#plot(probCalledStrike ,releaseVelocity) #weak linear
+#plot(spinRate, releaseVelocity) # weak linear
+#plot(locationHoriz, releaseVelocity) #weak linear
+#plot(locationVert, releaseVelocity) #weak linear
+#plot(movementHoriz, releaseVelocity) #weak linear
+#plot(movementVert, releaseVelocity) #positive linear
+```
+
+```{r vif, echo=F, fig.align='center'}
+viftable<-vif(pitch.reg.full)
+kable(viftable, caption = "Variance Inflation Factors", 
+      col.names = "VIF", booktabs = T)
+```
+
+```{r resid hist, echo=F, fig.align='center', ,fig.cap="\\label{fig:figs}Residual Histogram",fig.pos= 'H'}
+hist(pitch.reg.full$residuals, main = "Histogram of Residuals", xlab = "Residuals", col = "darkblue")
+```
+
+```{r fit vs resid, echo=F, fig.align='center', ,fig.cap="\\label{fig:figs}Residuals v.s Fitted Values Plot",fig.pos= 'H'}
+plot(fitted(pitch.reg.full), resid(pitch.reg.full), main = "Residuals v.s Fitted Values", xlab = "Fitted Values", ylab = "Residuals", col = "red")
+```
+
+```{r wls, echo=F, message=F }
+#Weighted Least Squares
+abs.res<- abs(resid(pitch.reg.full))
+# Regressing the absolute residuals against the predictors 
+reg.fit2 <- lm(abs.res ~ probCalledStrike+spinRate+locationHoriz+
+                 locationVert+movementHoriz+movementVert)
+# Defining the weights using the fitted values from this second regression: 
+weight.vec <- 1/((fitted(reg.fit2))^2)
+reg.fit.wls <- lm(releaseVelocity~ probCalledStrike+spinRate+locationHoriz+
+                    locationVert+movementHoriz+movementVert, weights = weight.vec)
+
+kable(summary(reg.fit.wls)$coef, digits = 4, caption = "Weighted Least Squares Regression Model")
+```
+
+```{r dffits, echo =F, message =F}
+# Outliers in Y
+ints.outliers<-which(abs(rstandard(pitch.reg.full))>2.5)
+# We have 1288 outliers but so we will remove them for better predictive ability
+# Influential Observations
+n<-nrow(Monday.Numeric)
+p<-ncol(Monday.Numeric)
+dffits.rule<-2*sqrt(p/n)
+dffits.i<-dffits(model = pitch.reg.full)
+dffits.infs<-which(abs(dffits.i)>dffits.rule) #Shows which observations have |dffits.i| > 2*sqrt(p/n)
+# WE have 4248 influential outlier observations
+#length(unique(c(ints.outliers,dffits.infs)))
+# 4319 unique outliers and influential outliers so many of them are the same observations.
+red.monday<- Monday.Numeric[-unique(c(ints.outliers,dffits.infs))]
+attach(red.monday)
+new.reg<-lm(releaseVelocity~ ., data = red.monday)
+kable(summary(new.reg)$coef, digits = 4, caption = "DFFITS Citerion Reduced Regression Model")
+```
+
+```{r mspr, include=F,echo=F}
+n.star<-nrow(test.dat)
+predict.tuesday<- predict(pitch.reg.full, test.dat[,-2])
+actual.responses<-test.dat$releaseVelocity
+mspr<-sum((actual.responses- predict.tuesday)^2)/n.star
+mse<-mean(pitch.reg.full$residuals^2)
+mspr/mse
+tues.pred.act<-cbind(predict.tuesday,actual.responses)
+mean(apply(tues.pred.act, 1, min)/ apply(tues.pred.act, 1, max))
+```
+
+```{r prediction plot, echo=F,fig.align='center', ,fig.cap="\\label{fig:figs}Tuesday Predicted v.s Actual Plot",fig.pos= 'H'}
+plot(predict.tuesday,actual.responses, main ="Tuesday Predicted v.s Actual Plot", col = "darkblue", xlab = "Predicted Release Velocity",ylab = "Actual Release Velocity")
+abline(a=0,b=1, col="red")
+```
